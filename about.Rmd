@@ -1,6 +1,6 @@
 ---
 title: "About This Website"
-author: "Your name"
+author: "Josephine Surer"
 date: "Last updated on `r Sys.Date()`"
 output:
   html_document:
@@ -12,10 +12,12 @@ output:
 
 More about this website.
 
-# Section name
+# About me
 
 Hello world!
+My name is Josephine Surer and I am a current senior at Smith College, majoring in Government and Economics. 
 
-## Subsection name
+## Where am I from?
 
 Hello world again!
+I am half American and half French. I grew up in Paris, France and went to highschool in the United States. 
