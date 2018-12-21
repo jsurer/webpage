@@ -1,0 +1,228 @@
+---
+title: "More information"
+author: "Josephine Surer & Elaona Lemoto"
+date: "Last updated on `r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    df_print: kable
+    code_folding: hide
+---
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+library(leaflet)
+library(tidycensus)
+library(sf)
+library(leaflet.extras)
+library(stringr)
+library(dplyr)
+library(ggplot2)
+
+
+#Bringing in tidycensus data
+Travel_Times<-read.csv("Travel_Times.csv")
+
+#Changing variable names
+names(Travel_Times)[names(Travel_Times) == 'Destination.Display.Name'] <- 'NAME'
+names(Travel_Times)[names(Travel_Times) == 'Mean.Travel.Time..Seconds.'] <- 'traveltime'
+
+
+#Bringing in tidycensus data
+population <- get_acs(geography = "tract", 
+              variables = c( "B01003_001"), 
+              state = "CA", 
+              county = "Los Angeles", 
+              geometry = TRUE)
+
+#Cleaning population data from tidycensus
+newpop <- population %>% 
+  mutate(
+    NAME = tolower(NAME),
+    NAME = str_replace_all(NAME,", los angeles county, california", ""),
+    NAME = str_replace_all(NAME, " ","_"),
+    NAME = str_replace_all(NAME, "[[:punct:]]", ""))
+
+newpop1 <- newpop %>% 
+  mutate(NAME = ifelse(nchar(NAME) == 15, str_c(NAME, "00"), NAME))
+
+#Cleaning Uber data 
+Travel_Times1<-Travel_Times %>% 
+  mutate(NAME,
+         NAME = tolower(NAME), 
+         NAME = str_replace_all(NAME," ",""))
+
+#Joining datasets 
+pop_travel<-newpop1 %>% 
+  full_join(Travel_Times1, by="NAME") %>% 
+  filter(!is.na(traveltime), !is.na(estimate)) %>% 
+  select(NAME, estimate, traveltime, geometry) %>% 
+  arrange(traveltime)
+
+
+#Creating New Variables
+pop_travel<-pop_travel %>% 
+  mutate(pop_factor = ifelse(estimate %in% 0:2499,0 ,
+                      ifelse(estimate %in% 2500:4999, 1,
+                      ifelse(estimate %in% 5000:7499,2,
+                      ifelse(estimate %in% 7500:10000, 3,NA)))))%>%
+  mutate(pop_factor=as.factor(pop_factor)) %>% 
+  mutate(travel_factor = ifelse(traveltime %in% 103:1202,0,
+                         ifelse(traveltime %in% 1203:1902, 1,
+                         ifelse(traveltime %in% 1903:2502,2,
+                         ifelse(traveltime %in% 2503:3303,3,NA)))))%>% 
+  mutate(travel_factor=as.factor(travel_factor)) %>%
+    mutate(ride_pay= (traveltime/100)*.19, payment=ride_pay+7.3) %>% 
+  mutate(ride_pay_surge=ifelse(pop_factor %in% 0,payment*1.5, 
+                         ifelse(pop_factor %in% 1, payment*2,
+                         ifelse(pop_factor%in% 2 ,payment*2.5, 
+                         ifelse(pop_factor %in% 3, payment*3, NA)))))
+#Cleaning the dollars and mins
+pop_travel$ride_pay_surge<-round(pop_travel$ride_pay_surge, digits=2)
+
+pop_travel<-pop_travel %>%
+    mutate(traveltime=traveltime/100)
+  
+#Creating colors and labels
+pal <- colorNumeric(palette = "magma",domain = population$estimate, reverse=TRUE)
+capopup <- paste0("Travel Time: ", pop_travel$traveltime," mins"," | ",
+                  "Ride Cost: $", pop_travel$ride_pay_surge)
+
+
+#Creating a dataframe for Honda Civic graph
+car_factor<-c("Depreciation", "Taxes & Fees", "Financing", "Fuel", "Insurance","Maintenance")
+car_costs<-c(3196, 1685, 1099, 1670, 1291, 162)
+car_data<-data.frame(car_factor, car_costs)
+```
+
+# Background
+
+## Who are the Uber drivers?
+
+  Unlike popular belief, Uber drivers are not your young, college millennials driving to make some money on the side. A [survey](https://www.carinsurance.com/Articles/how-much-uber-drivers-make) conducted by carinsurance.com showed that the average Uber driver was a late to ageing adult. The numbers revealed that 66% of Uber drivers were 51 and older years of age, while 84.8% were 41 years of age and older. One would expect in this fast paced “grab-and-go” culture, that Uber would have a younger work force. However, this survey shows that your average driver is actually much older, indicating the counterintuitive that Uber has a predominantly middle aged workforce.
+
+# Pricing
+
+## Your average ride pricing
+
+  Uber establishes its prices by charging its customers a per minute, per mile and booking fee. It then pays the majority of the fair to the driver and takes the service fee portion for itself.
+
+  The following visual shows the revenue according to travel time and population desity by tract. We used the population densities to represent demand. What we see is that moderately low travel times to low population dense areas bring in the most revenue. Referring back to our map, this makes sense. The center is the central business distict and also travel time from there to other areas of low populations are short. Therefore, we can assume that the demand for short-term transportation within the business district is high, and there’s a very big incentive for uber drivers to stay and complete as many short rides.
+  
+```{r}
+ggplot(data = pop_travel, mapping = aes(x=travel_factor , y = payment, fill=pop_factor)) +
+  geom_col()+
+  labs(x="Travel Time", y="Revenue")+
+  scale_y_continuous(labels = scales::dollar) +
+  ggtitle("Average Demand for Travel Time in Los Angeles")+
+  theme(plot.title = element_text(hjust = 0.5))+
+  scale_fill_discrete("Population Density",
+                      labels = c("Low", 
+                                   "Medium-Low", 
+                                   "Medium-High", 
+                                   "High", 
+                                    "NA"))+
+   scale_x_discrete(labels=c("Low", "Moderately Low", "Moderately High","High"))
+```
+
+
+# The Misconception of Uber Surges
+
+## How the Uber surge works
+  
+  Uber surge is the phenomenon when demand for ubers exceeds the supply of drivers. By increasing Uber prices, the demand for rides decrease. Uber purposefully does this in order to increase supply assuming drivers move to busier locations for more business [PDF](https://www.google.com/url?sa=t&rct=j&q=&esrc=s&source=web&cd=1&ved=2ahUKEwjQyOrZn7DfAhWP6FQKHawyApgQFjAAegQICxAC&url=https%3A%2F%2Fcanvas.northwestern.edu%2Fcourses%2F38559%2Ffiles%2F2470352%2Fdownload%3Fdownload_frd%3D1&usg=AOvVaw2NrzNdLWRpOljD4J-MxmAp). However, surges are not fixed. The pricing of the surge depends on the amount of demand versus the amount of supply. Uber raises the price with a specific multiplier in order to regulate the demand. The multiplier of the surge is applied to the base fare, making the trips slightly more profitable as Uber (not changing the % taken from drivers). This makes the trip more expensive for riders, but more appealing for drivers.
+
+  The following map shows the change in prices brought on by the price surge in Los Angeles the night New Year’s Eve. The ride costs here are dependent on the demand for rides. We again used the population data as a marker for demand and therefore we assume that areas with higher populations experienced a higher surge price. 
+
+
+```{r}
+pop_travel %>% 
+  sf::st_transform(4326) %>%
+  leaflet() %>%
+  setView(lat=34.038511, lng=-118.28114, zoom=10) %>%
+  #Setting up where we want to see our ma
+  addProviderTiles(provider = "CartoDB.DarkMatter",
+                   options = providerTileOptions(minZoom=10)) %>%
+  #Setting up polygon data and highlight option
+  addPolygons(fillColor = ~pal(estimate),
+              weight = 2,
+              opacity = 1,
+              color=~pal(estimate),
+              dashArray = 2,
+              fillOpacity = 0.7,
+              highlight = highlightOptions(
+                weight = 2,
+                color = "#666",
+                dashArray = "",
+                fillOpacity = 0.7),
+              label=~capopup,
+              labelOptions = labelOptions(textsize = "15px",
+                                          direction = "auto")) %>%
+  addCircleMarkers(lat=34.038511, lng=-118.28114,
+                   color = "black",
+                   radius = 5,
+                   popup = ~paste0("Central Location"), 
+                   opacity = 1) %>%
+   addLegend("bottomright", 
+              pal = pal, 
+              values = ~ estimate,
+              title = "Total Population",
+              opacity = 1,
+              na.label = "No data") %>%
+  
+  addResetMapButton()
+
+```
+
+
+  Prices surges do effectively lead to a bonus for the driver. However, this bonus is not fixed and therefore cannot be a substantial attribute for the driver to rely on. In many cases, drivers will “chase the surge”, going extensive distances to potentially earn more bonus. However, drivers will sometimes arrive in the area by the time the surge has disappeared because supply has increased by that moment. Price surging proves to be insufficiently compensating and can lead to an an increase in regular costs. 
+  
+  
+# The Overall Costs 
+
+  The following visual shows the biggest costs associated with a car in comparison to the car’s rate of depreciation. The depreciation rate shows the decrease of the car’s value over time. This graph aims to show not only maintence costs, but the depreciation in value of vehicle. Costs therefore only accumulate. Using outside data, we found that the most utilized vehicle in Uber is a Honda Civic and here we have it’s average costs only after the first year. 
+
+
+```{r}
+ggplot(car_data, aes(car_factor, car_costs, fill=car_factor))+
+  geom_col()+
+  scale_y_continuous(labels = scales::dollar) +
+  labs(x= "Different Type of Costs", y="")+
+  ggtitle("Ownership Costs of a 2018 Honda Civic: 1 Year Breakdown")+
+  theme(plot.title = element_text(hjust = 0.5))+
+ scale_fill_brewer(palette = "Set2")+
+  scale_fill_discrete(name="Type of Costs")
+
+```
+
+
+  Costs associated only accrue with time. It is important to note that these costs only regard those of the vehicle and exclude other expenses a driver may face such as food or age-related costs. 
+  
+# Conclusion 
+
+  The Uber market in Los Angeles allowed us to see a geography with different distances, and subjected to particularly high demand. What we deduced from the data gathered is that Uber drivers cannot rely on the profession full time. It may be the perfect opportunity to make enough to cover gas expenses and make use of your car. Yet, in the long run, working full time with dditional expenses, it's not feasible. Relying on price surges to make substantial bonuses is equally unreliable considering how quickly supply can increase. The Uber driver, therefore, can make more income depending on the demand, but it will not be enough to cover the consistent devaluation of their car. Therefore, Uber driving as a full time job is unsustainable.
+  
+## Sources
+
+
+Aron, Cory Michael. “Uber Surge Pricing Explained [+ Tips For Drivers] – Ridester.” Ridester.com, Ridester.com, 13 Sept. 2018, www.ridester.com/surge-pricing-explained/.
+
+Pat. “How Drivers Can Make More Money During SURGE Pricing.” Ridester.com, Ridester.com, 18 Sept. 2018, www.ridester.com/uber-surge-pricing-drivers/.
+
+
+Campbell, Henry. “Advice For New Uber Drivers - Don't Chase The Surge!” Maximum Ridesharing Profits, 29 Sept. 2018, maximumridesharingprofits.com/advice-new-uber-drivers-dont-chase-surge/.
+
+Rouse, Margaret. “What Is Gig Economy? - Definition from WhatIs.com.” WhatIs.com, whatis.techtarget.com/definition/gig-economy.
+
+Wrzesniewski, Gianpiero PetriglieriSusan J. AshfordAmy. “The 4 Things You Need to Thrive in the Gig Economy.” Harvard Business Review, 11 Apr. 2018, hbr.org/2018/03/thriving-in-the-gig-economy.
+
+Terry, QuHarrison. “Almost 1% of U.S. Households Are Earning Income on Uber, Lyft, and Other Ride-Sharing Apps.” Medium.com, Medium, 24 Sept. 2018, medium.com/futuresin/almost-1-of-u-s-households-are-earning-income-on-uber-lyft-and-other-ride-sharing-apps-c10b9b3f8fbd.
+
+Ridester. “Uber Rates and Cost: How Much Does Uber Cost? [+Fare Estimator].” Ridester.com, Ridester.com, 27 Nov. 2018, www.ridester.com/uber-rates-cost/.
+
+Vallett, Mark. “Uber, Lyft Driver Survey Shows Typically Educated, Underpaid and Underinsured.” Carinsurance.com, www.carinsurance.com/Articles/how-much-uber-drivers-make.
+
+Diakopoulos, Nicholas. “How Uber surge pricing really works.” The Washington Post, April 17, 2015 
+

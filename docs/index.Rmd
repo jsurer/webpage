@@ -1,0 +1,145 @@
+---
+title: "Inefficiency Hiding in Plain Sight: Uber and the Gig Economy"
+author: "Josephine Surer & Elaona Lemoto"
+date: "Last updated on `r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    df_print: kable
+    code_folding: hide
+---
+
+<!--
+Comments in HTML are like this! 
+-->
+
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+library(leaflet)
+library(tidycensus)
+library(sf)
+library(leaflet.extras)
+library(stringr)
+library(dplyr)
+library(ggplot2)
+
+
+#Bringing in tidycensus data
+Travel_Times<-read.csv("Travel_Times.csv")
+
+#Changing variable names
+names(Travel_Times)[names(Travel_Times) == 'Destination.Display.Name'] <- 'NAME'
+names(Travel_Times)[names(Travel_Times) == 'Mean.Travel.Time..Seconds.'] <- 'traveltime'
+
+
+
+#Bringing in tidycensus data
+population <- get_acs(geography = "tract", 
+              variables = c( "B01003_001"), 
+              state = "CA", 
+              county = "Los Angeles", 
+              geometry = TRUE)
+
+
+#Cleaning population data from tidycensus
+newpop <- population %>% 
+  mutate(
+    NAME = tolower(NAME),
+    NAME = str_replace_all(NAME,", los angeles county, california", ""),
+    NAME = str_replace_all(NAME, " ","_"),
+    NAME = str_replace_all(NAME, "[[:punct:]]", ""))
+
+newpop1 <- newpop %>% 
+  mutate(NAME = ifelse(nchar(NAME) == 15, str_c(NAME, "00"), NAME))
+
+#Cleaning Uber data 
+Travel_Times1<-Travel_Times %>% 
+  mutate(NAME,
+         NAME = tolower(NAME), 
+         NAME = str_replace_all(NAME," ",""))
+
+#Joining datasetsna
+pop_travel<-newpop1 %>% 
+  full_join(Travel_Times1, by="NAME") %>% 
+  filter(!is.na(traveltime), !is.na(estimate)) %>% 
+  select(NAME, estimate, traveltime, geometry) %>% 
+  arrange(traveltime)
+  
+#Creating New Variables
+pop_travel<-pop_travel %>% 
+  mutate(pop_factor = ifelse(estimate %in% 0:2499,0 ,
+                      ifelse(estimate %in% 2500:4999, 1,
+                      ifelse(estimate %in% 5000:7499,2,
+                      ifelse(estimate %in% 7500:10000, 3,NA)))))%>%
+  mutate(pop_factor=as.factor(pop_factor)) %>% 
+  mutate(travel_factor = ifelse(traveltime %in% 103:1202,0,
+                         ifelse(traveltime %in% 1203:1902, 1,
+                         ifelse(traveltime %in% 1903:2502,2,
+                         ifelse(traveltime %in% 2503:3303,3,NA)))))%>% 
+  mutate(travel_factor=as.factor(travel_factor)) %>% 
+  mutate(ride_pay= (traveltime/100)*.19, payment=ride_pay+7.3)
+
+#Fixing the payment and traveltime
+pop_travel$payment<-round(pop_travel$payment, digits=2)
+
+pop_travel<-pop_travel %>%
+    mutate(traveltime=traveltime/100)
+           
+  
+#Creating colors and labels
+pal <- colorNumeric(palette = "viridis",domain = population$estimate, reverse = TRUE)
+capopup <- paste0("Travel Time: ", pop_travel$traveltime," mins"," | ",
+                  "Ride Cost: $", pop_travel$payment)
+```
+
+Today’s workforce has significantly transformed in the past years through the introduction of the “gig economy”. The gig economy is defined as a “free market system in which temporary positions are common and organizations contract with independent workers for short-term engagements” [((Rouse))](https://whatis.techtarget.com/definition/gig-economy). Its distinguishing characteristic lies in its strong mobility. About 150 million individuals from North America and Western Europe have supposedly quit a stable job to join this economy [((HBS))](https://hbr.org/2018/03/thriving-in-the-gig-economy). A recent study by the JP Morgan Chase institute indicated that transportation apps had encountered the strongest increase in employment amongst online platforms. More staggering is how this increase translates into broader terms: nearly [1%](https://medium.com/futuresin/almost-1-of-u-s-households-are-earning-income-on-uber-lyft-and-other-ride-sharing-apps-c10b9b3f8fbd) of American households are now earning an income through ride-sharing apps. People are intrigued by the industry of ride-sharing because they see the flexibility and easy side money it can fairly procure. 
+
+This leads us to ask ourselves whether joining Uber is worth it. Can such a growing workforce sustain its lifestyle by solely driving with Uber? The following map is of Los Angeles, California using Uber’s [data](http://uberestimate.com/prices/Los-Angeles/) on travel times in relation to a centrally marked tract. We used outside data to calculate, on average, much a driver would receive by traveling from the center to another tract. To account for demand for uber rides, we used tidycensus data to color our map by population density.The following map shows the large demand as a result of the large population.
+
+ From an outside point of view, this map would indicate that an Uber driver in California can therefore make a healthy salary off of the large demand, especially in moments of high surges. However, the MORE INFORMATION page will reveal why this assumption is actually wrong. The average Uber driver cannot sustain a life by only completing 30 minute trips.
+
+
+
+```{r}
+pop_travel %>% 
+  sf::st_transform(4326) %>%
+  leaflet() %>%
+  setView(lat=34.038511, lng=-118.28114, zoom=10) %>%
+  #Setting up where we want to see our ma
+  addProviderTiles(provider = "CartoDB.DarkMatter", 
+                   options = providerTileOptions(minZoom=10)) %>%
+  #Setting up polygon data and highlight option
+  addPolygons(fillColor = ~pal(estimate),
+              weight = 2,
+              opacity = 1,
+              color=~pal(estimate),
+              dashArray = 2,
+              fillOpacity = 0.7,
+              highlight = highlightOptions(
+                weight = 2,
+                color = "#666",
+                dashArray = "",
+                fillOpacity = 0.7),
+              label=~capopup,
+              labelOptions = labelOptions(textsize = "15px",
+                                          direction = "auto")) %>%
+  addCircleMarkers(lat=34.038511, lng=-118.28114,
+                   color = "black",
+                   radius = 5,
+                   popup = ~paste0("Central Location"), 
+                   opacity = 1) %>%
+   addLegend("bottomright", 
+              pal = pal, 
+              values = ~ estimate,
+              title = "Total Population",
+              opacity = 1,
+              na.label = "No data") %>%
+  
+  addResetMapButton()
+
+```
+
+
